@@ -2,71 +2,73 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 )
 
-type RICheck struct {
-	ReservedID      string `json:"id"`
-	InstanceType    string `json:"type"`
-	Qty             int32  `json:"qty"`
-	Usage           int32  `json:"usage"`
-	EfficentPercent int32  `json:"efficient_percent"`
-	TimeLeft        int64  `json:"time_left"`
-	PaymentOption   string `json:"payment_option"`
+func main() {
+	region := flag.String("region", "eu-central-1", "AWS Region")
+	jsonformat := flag.Bool("json", false, "Output in JSON format")
+	flag.Parse()
+
+	cfg, err := NewConfig(*region)
+	if err != nil {
+		panic(err)
+	}
+
+	// ris, err := DescribeEC2ReservedInstances(cfg)
+	// if err != nil {
+	// 	panic(err)
+	// }
+
+	// ec2nodes, err := EC2Usage(cfg)
+	// if err != nil {
+	// 	panic(err)
+	// }
+
+	cacheNodes, err := CacheNodeUsage(cfg)
+	if err != nil {
+		panic(err)
+	}
+
+	reservedCacheNodes, err := ReservedCacheNodes(cfg)
+	if err != nil {
+		panic(err)
+	}
+	richecks := CoverageReport(reservedCacheNodes, cacheNodes)
+	if *jsonformat {
+		out, err := json.Marshal(richecks)
+		if err != nil {
+			panic(err)
+		}
+
+		fmt.Println(string(out))
+	} else {
+		fmt.Println("Reserved ID\tPayment\tType\tReserved/Usage\tCoverage")
+		for _, r := range richecks {
+			fmt.Printf("%s\t%s\t%s\t%d/%d\t%d%%\r\n", r.ReservedID, r.PaymentOption, r.InstanceType, r.Qty, r.Usage, r.Coverage)
+		}
+	}
 }
 
-//TODO: Add multi-region
-//TODO: Add elasticache's RI
-//TODO: Add text output
-func main() {
-	cfg, err := NewConfig()
-	if err != nil {
-		panic(err)
-	}
-
-	ris, err := DescribeReservedInstances(cfg)
-	if err != nil {
-		panic(err)
-	}
-
-	instances, err := DescribeEC2Instances(cfg)
-	if err != nil {
-		panic(err)
-	}
-
-	richecks := []RICheck{}
-	for _, r := range ris {
-		usage := 0
-		//TODO: state=active
-		for _, e := range instances {
-			if e.State.Name != "running" {
-				continue
-			}
-
-			if e.InstanceType == r.InstanceType {
-				usage++
-			}
+func CoverageReport(ris []RICheck, usage Usages) []RICheck {
+	for i := 0; i < len(ris); i++ {
+		r := &ris[i]
+		u, ok := usage[r.InstanceType]
+		if !ok {
+			r.Coverage = 0
+			continue
 		}
-		efficent := *r.InstanceCount * 100 / int32(usage)
-		if efficent > 100 {
-			efficent = (efficent - 100) * -1
+		if u == 0 {
+			r.Coverage = 0
+			continue
 		}
-
-		richecks = append(richecks, RICheck{
-			ReservedID:      *r.ReservedInstancesId,
-			InstanceType:    string(r.InstanceType),
-			Qty:             *r.InstanceCount,
-			Usage:           int32(usage),
-			EfficentPercent: efficent,
-			TimeLeft:        *r.Duration,
-			PaymentOption:   string(r.OfferingType),
-		})
+		r.Usage = u
+		r.Coverage = r.Qty * 100 / int32(u)
+		if r.Coverage > 100 {
+			r.Coverage = (r.Coverage - 100) * -1
+		}
 	}
 
-	out, err := json.Marshal(richecks)
-	if err != nil {
-		panic(err)
-	}
-
-	fmt.Println(string(out))
+	return ris
 }
