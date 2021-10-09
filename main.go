@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"text/tabwriter"
 )
 
 func main() {
@@ -48,23 +49,26 @@ func main() {
 }
 
 func coverageReport(ris Reserved, usage Usages) Reserved {
-	for k, r := range ris {
-		u, ok := usage[k]
-		if !ok {
-			continue
-		}
+	for k, u := range usage {
+		ri, ok := ris[k]
+		if ok {
+			if u == 0 {
+				continue
+			}
 
-		if u == 0 {
-			continue
-		}
+			ri.Usage = u
+			ri.Reserved = true
+			ri.Coverage = ri.Qty * 100 / u
+			if ri.Coverage > 100 {
+				ri.Coverage = (ri.Coverage - 100) * -1
+			}
 
-		r.Usage = u
-		r.Coverage = r.Qty * 100 / u
-		if r.Coverage > 100 {
-			r.Coverage = (r.Coverage - 100) * -1
+			ris[k] = ri
+		} else {
+			ris[k] = RICheck{
+				Usage: u,
+			}
 		}
-
-		ris[k] = r
 	}
 
 	return ris
@@ -72,10 +76,22 @@ func coverageReport(ris Reserved, usage Usages) Reserved {
 
 func printTextReport(service, region string, ris Reserved) {
 	fmt.Printf("\n%s Reserved Instances in %s\n", service, region)
-	fmt.Println("Type\t\tQty\tUsage\tCoverage")
+	w := tabwriter.NewWriter(os.Stdout, 1, 1, 1, ' ', 0)
+	fmt.Fprintln(w, "Type\tQty\tUsage\tCoverage\tReserved")
+
+	//TODO: add sort interface to RICheck type.
 	for k, r := range ris {
-		fmt.Printf("%s\t%d\t%d\t%d%%\n", k, r.Qty, r.Usage, r.Coverage)
+		if r.Reserved {
+			fmt.Fprintf(w, "%s\t%d\t%d\t%d%%\t%v\n", k, r.Qty, r.Usage, r.Coverage, r.Reserved)
+		}
 	}
+	for k, r := range ris {
+		if !r.Reserved {
+			fmt.Fprintf(w, "%s\t%d\t%d\t%d%%\t%v\n", k, r.Qty, r.Usage, r.Coverage, r.Reserved)
+		}
+	}
+
+	w.Flush()
 }
 
 func printJSONReport(region string, cacheRIchecks, ec2RIchecks Reserved) {

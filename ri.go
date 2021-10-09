@@ -11,10 +11,12 @@ import (
 
 type Usages map[string]int32
 type Reserved map[string]RICheck
+
 type RICheck struct {
 	Qty      int32 `json:"qty"`
 	Usage    int32 `json:"usage"`
 	Coverage int32 `json:"coverage"`
+	Reserved bool  `json:"reserved"`
 }
 
 func NewConfig(region string) (aws.Config, error) {
