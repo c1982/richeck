@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"os"
 )
 
 func main() {
@@ -16,15 +17,15 @@ func main() {
 		panic(err)
 	}
 
-	// ris, err := DescribeEC2ReservedInstances(cfg)
-	// if err != nil {
-	// 	panic(err)
-	// }
+	ec2Usage, err := EC2Usage(cfg)
+	if err != nil {
+		panic(err)
+	}
 
-	// ec2nodes, err := EC2Usage(cfg)
-	// if err != nil {
-	// 	panic(err)
-	// }
+	reservedEC2nodes, err := ReservedEC2Instances(cfg)
+	if err != nil {
+		panic(err)
+	}
 
 	cacheNodes, err := CacheNodeUsage(cfg)
 	if err != nil {
@@ -35,40 +36,63 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	richecks := CoverageReport(reservedCacheNodes, cacheNodes)
-	if *jsonformat {
-		out, err := json.Marshal(richecks)
-		if err != nil {
-			panic(err)
-		}
 
-		fmt.Println(string(out))
+	cacheRIchecks := coverageReport(reservedCacheNodes, cacheNodes)
+	ec2RIchecks := coverageReport(reservedEC2nodes, ec2Usage)
+	if *jsonformat {
+		printJSONReport(*region, cacheRIchecks, ec2RIchecks)
 	} else {
-		fmt.Println("Reserved ID\tPayment\tType\tReserved/Usage\tCoverage")
-		for _, r := range richecks {
-			fmt.Printf("%s\t%s\t%s\t%d/%d\t%d%%\r\n", r.ReservedID, r.PaymentOption, r.InstanceType, r.Qty, r.Usage, r.Coverage)
-		}
+		printTextReport("ElastiCache", *region, cacheRIchecks)
+		printTextReport("EC2", *region, ec2RIchecks)
 	}
 }
 
-func CoverageReport(ris []RICheck, usage Usages) []RICheck {
-	for i := 0; i < len(ris); i++ {
-		r := &ris[i]
-		u, ok := usage[r.InstanceType]
+func coverageReport(ris Reserved, usage Usages) Reserved {
+	for k, r := range ris {
+		u, ok := usage[k]
 		if !ok {
-			r.Coverage = 0
 			continue
 		}
+
 		if u == 0 {
-			r.Coverage = 0
 			continue
 		}
+
 		r.Usage = u
-		r.Coverage = r.Qty * 100 / int32(u)
+		r.Coverage = r.Qty * 100 / u
 		if r.Coverage > 100 {
 			r.Coverage = (r.Coverage - 100) * -1
 		}
+
+		ris[k] = r
 	}
 
 	return ris
+}
+
+func printTextReport(service, region string, ris Reserved) {
+	fmt.Printf("\n%s Reserved Instances in %s\n", service, region)
+	fmt.Println("Type\t\tQty\tUsage\tCoverage")
+	for k, r := range ris {
+		fmt.Printf("%s\t%d\t%d\t%d%%\n", k, r.Qty, r.Usage, r.Coverage)
+	}
+}
+
+func printJSONReport(region string, cacheRIchecks, ec2RIchecks Reserved) {
+	v := struct {
+		Region        string   `json:"region"`
+		ElastiCacheRI Reserved `json:"elasticache"`
+		EC2RI         Reserved `json:"ec2"`
+	}{
+		region,
+		cacheRIchecks,
+		ec2RIchecks,
+	}
+
+	out, err := json.MarshalIndent(v, "", "\t")
+	if err != nil {
+		panic(err)
+	}
+
+	os.Stdout.Write(out)
 }

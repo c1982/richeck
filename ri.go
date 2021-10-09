@@ -10,15 +10,11 @@ import (
 )
 
 type Usages map[string]int32
-
+type Reserved map[string]RICheck
 type RICheck struct {
-	ReservedID    string `json:"id"`
-	InstanceType  string `json:"type"`
-	Qty           int32  `json:"qty"`
-	Usage         int32  `json:"usage"`
-	Coverage      int32  `json:"coverage"`
-	TimeLeft      int64  `json:"time_left"`
-	PaymentOption string `json:"payment_option"`
+	Qty      int32 `json:"qty"`
+	Usage    int32 `json:"usage"`
+	Coverage int32 `json:"coverage"`
 }
 
 func NewConfig(region string) (aws.Config, error) {
@@ -30,23 +26,28 @@ func NewConfig(region string) (aws.Config, error) {
 	return cfg, nil
 }
 
-func ReservedEC2Instances(cfg aws.Config) (reservedInstances []RICheck, err error) {
+func ReservedEC2Instances(cfg aws.Config) (reservedInstances Reserved, err error) {
 	client := ec2.NewFromConfig(cfg)
 	ris, err := client.DescribeReservedInstances(context.TODO(), &ec2.DescribeReservedInstancesInput{})
 	if err != nil {
 		return reservedInstances, err
 	}
 
-	reservedInstances = []RICheck{}
+	reservedInstances = Reserved{}
 	for _, r := range ris.ReservedInstances {
-		//TODO: state=active
-		reservedInstances = append(reservedInstances, RICheck{
-			ReservedID:    *r.ReservedInstancesId,
-			InstanceType:  string(r.InstanceType),
-			Qty:           *r.InstanceCount,
-			TimeLeft:      *r.Duration,
-			PaymentOption: string(r.OfferingType),
-		})
+		if r.State != "active" {
+			continue
+		}
+
+		v, ok := reservedInstances[string(r.InstanceType)]
+		if ok {
+			v.Qty = v.Qty + *r.InstanceCount
+			reservedInstances[string(r.InstanceType)] = v
+		} else {
+			reservedInstances[string(r.InstanceType)] = RICheck{
+				Qty: *r.InstanceCount,
+			}
+		}
 	}
 
 	return reservedInstances, nil
@@ -65,6 +66,7 @@ func EC2Usage(cfg aws.Config) (usages Usages, err error) {
 			if i.State.Name != "running" {
 				continue
 			}
+
 			v, ok := usages[string(i.InstanceType)]
 			if ok {
 				usages[string(i.InstanceType)] = v + 1
@@ -77,23 +79,27 @@ func EC2Usage(cfg aws.Config) (usages Usages, err error) {
 	return usages, nil
 }
 
-func ReservedCacheNodes(cfg aws.Config) (reservedcachenode []RICheck, err error) {
+func ReservedCacheNodes(cfg aws.Config) (reservedcachenode Reserved, err error) {
 	client := elasticache.NewFromConfig(cfg)
 	list, err := client.DescribeReservedCacheNodes(context.TODO(), &elasticache.DescribeReservedCacheNodesInput{})
 	if err != nil {
 		return reservedcachenode, err
 	}
 
-	reservedcachenode = []RICheck{}
+	reservedcachenode = Reserved{}
 	for _, r := range list.ReservedCacheNodes {
-		//TODO: state=active
-		reservedcachenode = append(reservedcachenode, RICheck{
-			ReservedID:    *r.ReservedCacheNodeId,
-			InstanceType:  *r.CacheNodeType,
-			Qty:           r.CacheNodeCount,
-			TimeLeft:      int64(r.Duration),
-			PaymentOption: string(*r.OfferingType),
-		})
+		if *r.State != "active" {
+			continue
+		}
+		v, ok := reservedcachenode[string(*r.CacheNodeType)]
+		if ok {
+			v.Qty = v.Qty + r.CacheNodeCount
+			reservedcachenode[string(*r.CacheNodeType)] = v
+		} else {
+			reservedcachenode[string(*r.CacheNodeType)] = RICheck{
+				Qty: r.CacheNodeCount,
+			}
+		}
 	}
 
 	return reservedcachenode, nil
